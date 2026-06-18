@@ -21,7 +21,6 @@ class BitableExporter:
         "对阵": "对阵",
         "比赛日期": "比赛日期",
         "赛事阶段": "赛事阶段",
-        "比赛场馆": "比赛场馆",
         "触发事件": "触发事件",
         "事件类型": "事件类型",
         "关联球员": "关联球员",
@@ -52,12 +51,11 @@ class BitableExporter:
         "Push Desc (PT-BR)": "Push Desc (PT-BR)",
         # AIGC & Hashtag
         "AIGC Prompt JSON": "AIGC Prompt JSON",
-        "Hashtag 建议": "Hashtag 建议",
+        "Hashtag建议": "Hashtag建议",
         # 审核
         "审核状态": "审核状态",
         "优先级": "优先级",
         "审核备注": "审核备注",
-        "X Trending 情绪": "X Trending 情绪",
     }
 
     # 事件类型映射 (英文代码 → 中文显示名)
@@ -87,14 +85,12 @@ class BitableExporter:
         {
             "event_context": {...},
             "content": [{"scenario": ..., "en": {...}, "translations": {...}}, ...],
-            "x_sentiment": "...",
         }
 
         返回: 创建的 record_id 列表
         """
         event_ctx = result.get("event_context", {})
         content_list = result.get("content", [])
-        x_sentiment = result.get("x_sentiment", "")
 
         record_ids = []
 
@@ -102,7 +98,6 @@ class BitableExporter:
             record_fields = self._build_record_fields(
                 event_ctx=event_ctx,
                 content=content_entry,
-                x_sentiment=x_sentiment,
             )
 
             record_id = self._create_record(record_fields)
@@ -111,7 +106,7 @@ class BitableExporter:
 
         return record_ids
 
-    def _build_record_fields(self, event_ctx: dict, content: dict, x_sentiment: str) -> dict:
+    def _build_record_fields(self, event_ctx: dict, content: dict) -> dict:
         """构建单条 Bitable 记录的字段值"""
         match = event_ctx.get("match", {})
         event = event_ctx.get("event", {})
@@ -128,7 +123,6 @@ class BitableExporter:
             # 赛事信息
             "对阵": match.get("match_display", ""),
             "赛事阶段": match.get("stage", "小组赛"),
-            "比赛场馆": match.get("venue", ""),
             "触发事件": event.get("description", ""),
             "关联球员": event.get("player", ""),
             "场景类型": scenario,
@@ -143,12 +137,17 @@ class BitableExporter:
 
             # AIGC Prompt & Hashtags
             "AIGC Prompt JSON": json.dumps(aigc_prompts, ensure_ascii=False, indent=2),
-            "Hashtag 建议": en.get("hashtags", ""),
+            "Hashtag建议": en.get("hashtags", ""),
 
             # 审核
             "审核状态": "🟡待审核",
             "优先级": "🔥紧急",
         }
+
+        # 比赛日期 (从 API 数据获取)
+        api_data = event_ctx.get("api_data", {})
+        if api_data.get("date"):
+            fields["比赛日期"] = api_data["date"]
 
         # 多语言内容
         lang_field_map = {
@@ -168,10 +167,6 @@ class BitableExporter:
         teams = match.get("teams", [])
         if teams:
             fields["关联国家"] = ", ".join(teams)
-
-        # X Trending 情绪
-        if x_sentiment:
-            fields["X Trending 情绪"] = x_sentiment
 
         # 情绪标签 (从场景推断)
         from processors.scenario_classifier import SCENARIOS

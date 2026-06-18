@@ -1,8 +1,33 @@
+# === 环境变量 (敏感) ===
 .env
+.env.local
+.env.*.local
+
+# === Python ===
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# === 输出文件 ===
 outputs/
 data/x_trending_*.json
 data/player_memes_local.json
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === OS ===
 .DS_Store
+Thumbs.db
+
+# === 日志 ===
+*.log
