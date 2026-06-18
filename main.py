@@ -17,7 +17,6 @@ from pathlib import Path
 
 from config import settings
 from data_sources.api_football import APIFootballClient
-from scrapers.x_trending_scraper import XTrendingScraper
 from processors.scenario_classifier import ScenarioClassifier
 from processors.content_generator import ContentGenerator
 from processors.translator import MultiLanguageTranslator
@@ -43,12 +42,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     gen.add_argument("--minute", type=int, default=0, help="事件发生分钟数")
     gen.add_argument("--score", default="", help="当前比分，如 '1-2'")
     gen.add_argument("--stage", default="小组赛",
-                      choices=["小组赛", "16强", "8强", "4强", "半决赛", "决赛"],
+                      choices=["小组赛", "16强", "8强", "4强", "半决赛", "季军赛", "决赛"],
                       help="赛事阶段")
     gen.add_argument("--venue", default="", help="比赛场馆")
     gen.add_argument("--scenario", default="",
                       help="强制指定场景 (可选): 玩梗群嘲/情怀致敬/社交派对/短视频二创/主场狂热/遗憾怀念")
-    gen.add_argument("--x-trending", action="store_true", help="启用 X Trending 数据作为情绪校准")
     gen.add_argument("--dry-run", action="store_true", help="仅生成内容，不写入 Bitable")
     gen.add_argument("--output", default="", help="额外输出 JSON 到指定路径")
 
@@ -101,30 +99,8 @@ def run_generate(args):
         except Exception as e:
             print(f"  ⚠ 聚合数据查询失败: {e}，使用手动输入数据")
 
-    # ── Step 2: X Trending 情绪校准（可选）──
-    x_sentiment = ""
-    if args.x_trending:
-        print("[2/5] 抓取 X Trending 情绪数据...")
-        try:
-            scraper = XTrendingScraper()
-            trending_data = scraper.get_sports_trending(query=args.player or teams[0])
-            if trending_data:
-                x_sentiment = scraper.summarize_sentiment(trending_data)
-                event_context["x_trending"] = {
-                    "sentiment": x_sentiment,
-                    "top_hashtags": trending_data.get("hashtags", []),
-                    "trending_topics": trending_data.get("topics", []),
-                }
-                print(f"  ✓ X 情绪: {x_sentiment[:80]}...")
-            else:
-                print(f"  ⚠ 未获取到 X Trending 数据")
-        except Exception as e:
-            print(f"  ⚠ X Trending 抓取失败: {e}")
-    else:
-        print("[2/5] 跳过 X Trending (未启用 --x-trending)")
-
-    # ── Step 3: 场景分类 ──
-    print("[3/5] 场景分类...")
+    # ── Step 2: 场景分类 ──
+    print("[2/4] 场景分类...")
     classifier = ScenarioClassifier()
     if args.scenario:
         scenarios = [{"scenario": args.scenario, "confidence": 1.0, "reason": "手动指定"}]
@@ -134,8 +110,8 @@ def run_generate(args):
     for s in scenarios:
         print(f"  → {s['scenario']} (置信度: {s['confidence']:.0%}) - {s['reason']}")
 
-    # ── Step 4: 内容生成 (EN 基准) ──
-    print("[4/5] 生成 Push 内容 (EN 基准)...")
+    # ── Step 3: 内容生成 (EN 基准) ──
+    print("[3/4] 生成 Push 内容 (EN 基准)...")
     generator = ContentGenerator()
     all_content = []
 
@@ -147,7 +123,6 @@ def run_generate(args):
         en_content = generator.generate(
             event_context=event_context,
             scenario=scenario,
-            x_sentiment=x_sentiment,
         )
 
         # 多语言适配
@@ -166,14 +141,13 @@ def run_generate(args):
 
         print(f"  ✓ 完成: Push Title (EN) = {en_content.get('push_title', '')[:50]}")
 
-    # ── Step 5: 输出 ──
-    print("[5/5] 输出结果...")
+    # ── Step 4: 输出 ──
+    print("[4/4] 输出结果...")
 
     result = {
         "event_context": event_context,
         "content": all_content,
         "generated_at": datetime.now().isoformat(),
-        "x_sentiment": x_sentiment,
     }
 
     # 保存 JSON
@@ -190,7 +164,21 @@ def run_generate(args):
         try:
             exporter = BitableExporter()
             record_ids = exporter.export(result)
-            print(f"  ✓ 已写入 {len(record_ids)} 条记录到 Bitable")
+            count = len(record_ids)
+            print(f"  ✓ 已写入 {count} 条记录到 Bitable")
+
+            # 通知运营群
+            if count > 0 and settings.FEISHU_WEBHOOK_URL:
+                notification = (
+                    f"🏆 世界杯 Push 内容已生成\n"
+                    f"对阵: {args.match}\n"
+                    f"事件: {args.event} ({args.minute}')\n"
+                    f"生成场景: {len(all_content)} 个 × 7 语言 = {len(all_content)*7} 条\n"
+                    f"写入 Bitable: {count} 条记录\n"
+                    f"时间: {datetime.now().strftime('%m-%d %H:%M')}"
+                )
+                exporter.notify_feishu_group(notification)
+                print(f"  ✓ 已发送飞书通知到运营群")
         except Exception as e:
             print(f"  ✗ Bitable 写入失败: {e}")
             print(f"    JSON 文件已保存，可稍后手动导入")
@@ -219,7 +207,6 @@ def run_test():
         stage="小组赛",
         venue="MetLife Stadium, New Jersey",
         scenario="玩梗群嘲",
-        x_trending=False,
         dry_run=True,
         output="",
     )

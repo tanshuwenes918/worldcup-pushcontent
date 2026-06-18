@@ -3,7 +3,6 @@
 """
 import json
 from pathlib import Path
-from typing import Optional
 
 # 球员梗标签库
 PLAYER_MEME_TAGS_FILE = Path(__file__).resolve().parent.parent / "data" / "player_memes.json"

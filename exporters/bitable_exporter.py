@@ -141,7 +141,8 @@ class BitableExporter:
 
             # 审核
             "审核状态": "🟡待审核",
-            "优先级": "🔥紧急",
+            "优先级": self._calculate_priority(event_ctx, content),
+            "审核备注": "",
         }
 
         # 比赛日期 (从 API 数据获取)
@@ -177,13 +178,53 @@ class BitableExporter:
 
         return fields
 
+    # ── 优先级映射 ──
+    # 高优先级事件类型（进球/红牌/点球等直接决定比赛走向的事件）
+    HIGH_PRIORITY_EVENTS = {
+        "goal", "red_card", "penalty", "var_controversy", "upset",
+        "hat_trick", "own_goal", "last_minute_goal",
+    }
+    # 中优先级事件类型（有话题性但不直接决定胜负）
+    MEDIUM_PRIORITY_EVENTS = {"milestone", "penalty_save", "injury"}
+    # 高优先级赛事阶段
+    HIGH_PRIORITY_STAGES = {"决赛", "半决赛", "4强"}
+
+    def _calculate_priority(self, event_ctx: dict, content: dict) -> str:
+        """
+        根据事件类型 + 赛事阶段动态计算优先级
+
+        优先级分级:
+        - 🔥紧急: 高优先级事件 或 关键阶段比赛
+        - ⭐重要: 中等优先级事件
+        - 📌普通: 其他
+        """
+        event = event_ctx.get("event", {})
+        match = event_ctx.get("match", {})
+        event_type = event.get("type", "")
+        stage = match.get("stage", "")
+
+        # 关键阶段比赛直接最高优先级
+        if stage in self.HIGH_PRIORITY_STAGES:
+            return "🔥紧急"
+
+        # 按事件类型分级
+        if event_type in self.HIGH_PRIORITY_EVENTS:
+            return "🔥紧急"
+        if event_type in self.MEDIUM_PRIORITY_EVENTS:
+            return "⭐重要"
+
+        return "📌普通"
+
     def _create_record(self, fields: dict) -> Optional[str]:
         """
         通过 lark-cli 创建 Bitable 记录
         使用 subprocess 调用 lark-cli，因为它已经配置好了认证
         """
-        # lark-cli 完整路径（Python subprocess 可能找不到）
-        lark_cli = r"C:\Users\AS\.workbuddy\binaries\node\versions\22.12.0\lark-cli.cmd"
+        # lark-cli 路径（从 settings 读取，可配置）
+        lark_cli = settings.LARK_CLI_PATH
+        if not lark_cli:
+            # 回退默认路径
+            lark_cli = r"C:\Users\AS\.workbuddy\binaries\node\versions\22.12.0\lark-cli.cmd"
 
         # 写入临时文件避免命令行长度限制（lark-cli 要求相对路径）
         import tempfile, os

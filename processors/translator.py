@@ -3,6 +3,8 @@
 不是直译，而是"文化适配重写"
 """
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from config import settings
 from processors.content_generator import ContentGenerator
 
@@ -68,22 +70,17 @@ class MultiLanguageTranslator:
 
     def translate_all(self, en_content: dict, scenario: str, event_context: dict) -> dict:
         """
-        将英文基准内容适配为所有语言版本
+        并行将英文基准内容适配为所有语言版本
 
         返回: {
-            "ZH": {"push_title": ..., "push_description": ..., "aigc_prompt": ..., "hashtags": ...},
-            "ES": {...},
-            "MS": {...},
-            "FIL": {...},
-            "PT-PT": {...},
-            "PT-BR": {...},
+            "ZH": {"push_title": ..., "push_description": ..., ...},
+            ...
         }
         """
+        target_langs = ["ZH", "ES", "MS", "FIL", "PT-PT", "PT-BR"]
         results = {}
 
-        # EN 已经生成，跳过
-        # 对每种目标语言进行文化适配
-        for lang_code in ["ZH", "ES", "MS", "FIL", "PT-PT", "PT-BR"]:
+        def _do_translate(lang_code: str) -> tuple[str, dict]:
             try:
                 translated = self._translate_single(
                     en_content=en_content,
@@ -91,15 +88,29 @@ class MultiLanguageTranslator:
                     scenario=scenario,
                     event_context=event_context,
                 )
-                results[lang_code] = translated
+                # 校验翻译结果
+                warnings = self.generator._validate_content(
+                    translated, context_label=lang_code
+                )
+                self.generator._log_validation(warnings, context_label=lang_code)
+                return lang_code, translated
             except Exception as e:
                 print(f"    ⚠ {lang_code} 翻译失败: {e}，使用英文基准版")
-                results[lang_code] = {
+                return lang_code, {
                     "push_title": en_content.get("push_title", ""),
                     "push_description": en_content.get("push_description", ""),
                     "aigc_prompt": en_content.get("aigc_prompt", {}),
                     "hashtags": en_content.get("hashtags", ""),
                 }
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_do_translate, lang): lang
+                for lang in target_langs
+            }
+            for future in as_completed(futures):
+                lang_code, translated = future.result()
+                results[lang_code] = translated
 
         return results
 
