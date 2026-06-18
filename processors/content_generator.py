@@ -222,6 +222,7 @@ Return ONLY the JSON object, no extra text."""
         system_prompts = {
             "content_generator": "You are a world-class social media content strategist and AI music prompt engineer specializing in football/soccer culture. You output only valid JSON. ALL content you generate MUST be in ENGLISH only — never use Chinese or any other language.",
             "translator": "You are a football culture localization expert. You adapt content culturally, not translate literally. You output only valid JSON.",
+            "matchday_push_generator": "You are a World Cup matchday push editor for an AI music app. You merge official match data and social trend signals, then output only valid JSON for EN, ZH, ES, MS, FIL, PT-PT, and PT-BR.",
         }
 
         payload = {
@@ -282,21 +283,21 @@ Return ONLY the JSON object, no extra text."""
                 else:
                     raise  # 4xx (非429) 不重试，直接抛
                 if attempt < max_retries:
-                    print(f"  ⚠ LLM 调用失败 (HTTP {status_code})，{wait}s 后重试 ({attempt}/{max_retries})...")
+                    print(f"  ! LLM 调用失败 (HTTP {status_code})，{wait}s 后重试 ({attempt}/{max_retries})...")
                     time.sleep(wait)
 
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last_error = e
                 wait = 2 ** attempt
                 if attempt < max_retries:
-                    print(f"  ⚠ LLM 网络错误: {e}，{wait}s 后重试 ({attempt}/{max_retries})...")
+                    print(f"  ! LLM 网络错误: {e}，{wait}s 后重试 ({attempt}/{max_retries})...")
                     time.sleep(wait)
 
             except (json.JSONDecodeError, ValueError) as e:
                 last_error = e
                 wait = 2 ** attempt
                 if attempt < max_retries:
-                    print(f"  ⚠ LLM 响应解析失败: {e}，{wait}s 后重试 ({attempt}/{max_retries})...")
+                    print(f"  ! LLM 响应解析失败: {e}，{wait}s 后重试 ({attempt}/{max_retries})...")
                     time.sleep(wait)
 
         raise RuntimeError(f"LLM 调用失败（{max_retries} 次重试后）: {last_error}")
@@ -383,8 +384,8 @@ Return ONLY the JSON object, no extra text."""
     def _log_validation(self, warnings: list[str], context_label: str = ""):
         """打印校验警告"""
         if not warnings:
-            print(f"  ✓ 内容校验通过{' ' + context_label if context_label else ''}")
+            print(f"  OK 内容校验通过{' ' + context_label if context_label else ''}")
             return
-        print(f"  ⚠ 内容校验发现 {len(warnings)} 个问题{' ' + context_label if context_label else ''}:")
+        print(f"  ! 内容校验发现 {len(warnings)} 个问题{' ' + context_label if context_label else ''}:")
         for w in warnings:
             print(f"    - {w}")

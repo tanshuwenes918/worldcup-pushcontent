@@ -20,6 +20,7 @@ from data_sources.api_football import APIFootballClient
 from processors.scenario_classifier import ScenarioClassifier
 from processors.content_generator import ContentGenerator
 from processors.translator import MultiLanguageTranslator
+from processors.matchday_pipeline import MatchdayPipeline
 from exporters.bitable_exporter import BitableExporter
 
 
@@ -52,6 +53,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # ── test 命令 ──
     sub.add_parser("test", help="用模拟数据测试全流程")
+
+    # ── matchday 命令 ──
+    matchday = sub.add_parser("matchday", help="比赛日定时任务：赛程 + X Sports + LLM + 飞书")
+    matchday.add_argument("--date", default="", help="比赛日期 YYYY-MM-DD；留空默认今天")
+    matchday.add_argument("--limit", type=int, default=0, help="最多处理几场比赛，默认读取 MATCHDAY_MAX_MATCHES")
+    matchday.add_argument("--dry-run", action="store_true", help="只保存 JSON，不写入飞书")
+    matchday.add_argument("--skip-x", action="store_true", help="跳过 X Sports Trending 抓取")
+    matchday.add_argument("--mock-llm", action="store_true", help="使用本地模拟内容，不调用 LLM")
+    matchday.add_argument("--sample-data", action="store_true", help="使用本地样例赛程和热点，不访问外部数据源")
 
     return parser
 
@@ -88,16 +98,16 @@ def run_generate(args):
     # ── Step 1.5: 尝试从聚合数据补充赛程 ──
     if settings.JUHE_API_KEY:
         try:
-            print("  ↳ 查询聚合数据补充赛程信息...")
+            print("  -> 查询聚合数据补充赛程信息...")
             api = APIFootballClient()
             match_data = api.search_match(teams[0], teams[1])
             if match_data:
                 event_context["api_data"] = match_data
-                print(f"  ✓ 赛程数据已获取")
+                print(f"  OK 赛程数据已获取")
             else:
-                print(f"  ⚠ 未找到匹配赛程，使用手动输入数据")
+                print(f"  ! 未找到匹配赛程，使用手动输入数据")
         except Exception as e:
-            print(f"  ⚠ 聚合数据查询失败: {e}，使用手动输入数据")
+            print(f"  ! 聚合数据查询失败: {e}，使用手动输入数据")
 
     # ── Step 2: 场景分类 ──
     print("[2/4] 场景分类...")
@@ -108,7 +118,7 @@ def run_generate(args):
         scenarios = classifier.classify(event_context)
 
     for s in scenarios:
-        print(f"  → {s['scenario']} (置信度: {s['confidence']:.0%}) - {s['reason']}")
+        print(f"  -> {s['scenario']} (置信度: {s['confidence']:.0%}) - {s['reason']}")
 
     # ── Step 3: 内容生成 (EN 基准) ──
     print("[3/4] 生成 Push 内容 (EN 基准)...")
@@ -117,7 +127,7 @@ def run_generate(args):
 
     for scenario_info in scenarios:
         scenario = scenario_info["scenario"]
-        print(f"  ↳ 生成场景: {scenario}")
+        print(f"  -> 生成场景: {scenario}")
 
         # 生成英文基准内容
         en_content = generator.generate(
@@ -126,7 +136,7 @@ def run_generate(args):
         )
 
         # 多语言适配
-        print(f"  ↳ 翻译为 7 语言...")
+        print(f"  -> 翻译为 7 语言...")
         translator = MultiLanguageTranslator()
         multilang_content = translator.translate_all(en_content, scenario, event_context)
 
@@ -139,7 +149,7 @@ def run_generate(args):
         }
         all_content.append(content_entry)
 
-        print(f"  ✓ 完成: Push Title (EN) = {en_content.get('push_title', '')[:50]}")
+        print(f"  OK 完成: Push Title (EN) = {en_content.get('push_title', '')[:50]}")
 
     # ── Step 4: 输出 ──
     print("[4/4] 输出结果...")
@@ -156,16 +166,16 @@ def run_generate(args):
     )
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"  ✓ JSON 已保存: {output_path}")
+    print(f"  OK JSON 已保存: {output_path}")
 
     # 写入 Bitable
     if not args.dry_run and not settings.DRY_RUN:
-        print("  ↳ 写入飞书多维表格...")
+        print("  -> 写入飞书多维表格...")
         try:
             exporter = BitableExporter()
             record_ids = exporter.export(result)
             count = len(record_ids)
-            print(f"  ✓ 已写入 {count} 条记录到 Bitable")
+            print(f"  OK 已写入 {count} 条记录到 Bitable")
 
             # 通知运营群
             if count > 0 and settings.FEISHU_WEBHOOK_URL:
@@ -178,12 +188,12 @@ def run_generate(args):
                     f"时间: {datetime.now().strftime('%m-%d %H:%M')}"
                 )
                 exporter.notify_feishu_group(notification)
-                print(f"  ✓ 已发送飞书通知到运营群")
+                print(f"  OK 已发送飞书通知到运营群")
         except Exception as e:
-            print(f"  ✗ Bitable 写入失败: {e}")
+            print(f"  ERROR Bitable 写入失败: {e}")
             print(f"    JSON 文件已保存，可稍后手动导入")
     else:
-        print("  ⚠ DRY RUN 模式，跳过 Bitable 写入")
+        print("  ! DRY RUN 模式，跳过 Bitable 写入")
 
     elapsed = time.time() - start_time
     print(f"\n{'='*60}")
@@ -196,7 +206,7 @@ def run_generate(args):
 
 def run_test():
     """用模拟数据测试全流程"""
-    print("\n🧪 测试模式：使用模拟事件数据\n")
+    print("\n[TEST] 测试模式：使用模拟事件数据\n")
 
     test_args = argparse.Namespace(
         match="FRA vs BRA",
@@ -223,6 +233,16 @@ def main():
 
     if args.command == "generate":
         run_generate(args)
+    elif args.command == "matchday":
+        pipeline = MatchdayPipeline(
+            match_date=args.date,
+            limit=args.limit or None,
+            dry_run=args.dry_run,
+            skip_x=args.skip_x,
+            mock_llm=args.mock_llm,
+            sample_data=args.sample_data,
+        )
+        pipeline.run()
     elif args.command == "test":
         run_test()
 

@@ -95,7 +95,7 @@ class MultiLanguageTranslator:
                 self.generator._log_validation(warnings, context_label=lang_code)
                 return lang_code, translated
             except Exception as e:
-                print(f"    ⚠ {lang_code} 翻译失败: {e}，使用英文基准版")
+                print(f"    ! {lang_code} 翻译失败: {e}，使用英文基准版")
                 return lang_code, {
                     "push_title": en_content.get("push_title", ""),
                     "push_description": en_content.get("push_description", ""),

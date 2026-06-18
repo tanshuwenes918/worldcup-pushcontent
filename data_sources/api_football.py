@@ -4,8 +4,9 @@
 替代原 API-Football，使用国内聚合数据服务
 """
 import json
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from config import settings
@@ -72,12 +73,12 @@ class APIFootballClient:
     def _request(self, params: dict = None) -> dict:
         """发送 API 请求"""
         url = self.BASE_URL
-        query_parts = [f"key={self.api_key}"]
+        query_parts = [("key", self.api_key)]
         if params:
             for k, v in params.items():
                 if v is not None and v != "":
-                    query_parts.append(f"{k}={v}")
-        url = f"{url}?{'&'.join(query_parts)}"
+                    query_parts.append((k, str(v)))
+        url = f"{url}?{urllib.parse.urlencode(query_parts)}"
 
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -120,7 +121,7 @@ class APIFootballClient:
 
             return None
         except Exception as e:
-            print(f"  ⚠ 聚合数据查询失败: {e}")
+            print(f"  ! 聚合数据查询失败: {e}")
             return None
 
     def search_match_by_name(self, team_a_name: str, team_b_name: str) -> Optional[dict]:
@@ -140,7 +141,7 @@ class APIFootballClient:
 
             return None
         except Exception as e:
-            print(f"  ⚠ 聚合数据查询失败: {e}")
+            print(f"  ! 聚合数据查询失败: {e}")
             return None
 
     def get_match_events(self, fixture_id: int) -> list:
@@ -165,18 +166,27 @@ class APIFootballClient:
 
     def get_today_matches(self) -> list:
         """获取今日所有比赛（实用方法）"""
-        from datetime import date
         today = date.today().strftime("%Y-%m-%d")
+        return self.get_matches_by_date(today)
+
+    def get_matches_by_date(self, match_date: str) -> list:
+        """获取指定日期的比赛，日期格式 YYYY-MM-DD。"""
         try:
-            data = self._request({"date": today})
+            data = self._request({"date": match_date})
             matches = []
             for day in data.get("result", {}).get("data", []):
                 for m in day.get("schedule_list", []):
                     matches.append(self._normalize_match(m))
             return matches
         except Exception as e:
-            print(f"  ⚠ 查询今日比赛失败: {e}")
+            print(f"  ! 查询比赛日赛程失败: {e}")
             return []
+
+    def get_matchday_matches(self, match_date: str = "") -> list:
+        """比赛日入口：默认取今天，也支持 GitHub Actions 手动传日期。"""
+        if match_date:
+            return self.get_matches_by_date(match_date)
+        return self.get_today_matches()
 
     def get_live_matches(self) -> list:
         """获取所有进行中的比赛"""
@@ -188,7 +198,7 @@ class APIFootballClient:
                     live.append(self._normalize_match(m))
             return live
         except Exception as e:
-            print(f"  ⚠ 查询进行中比赛失败: {e}")
+            print(f"  ! 查询进行中比赛失败: {e}")
             return []
 
     def _normalize_match(self, m: dict) -> dict:
