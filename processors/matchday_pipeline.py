@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import settings
-from data_sources.api_football import APIFootballClient
+from data_sources.api_football import APIFootballClient, team_display_cn
 from exporters.bitable_exporter import BitableExporter
 from processors.matchday_generator import MatchdayPushGenerator
 from scrapers.x_trending_scraper import XTrendingScraper
@@ -472,13 +472,14 @@ class MatchdayPipeline:
     def _to_export_result(self, match: dict, content: dict, trending: dict, opportunity: dict) -> dict:
         home = match.get("team_home", {})
         away = match.get("team_away", {})
-        home_code = home.get("code") or home.get("name") or "TBD"
-        away_code = away.get("code") or away.get("name") or "TBD"
+        home_display = team_display_cn(home)
+        away_display = team_display_cn(away)
+        match_display = f"{home_display} vs {away_display}"
         score = self._score_display(home, away)
         event_context = {
             "match": {
-                "teams": [home_code, away_code],
-                "match_display": f"{home_code} vs {away_code}",
+                "teams": [home_display, away_display],
+                "match_display": match_display,
                 "stage": match.get("stage", ""),
                 "venue": match.get("venue", ""),
                 "score": score,
@@ -487,7 +488,7 @@ class MatchdayPipeline:
                 "type": opportunity.get("type", "matchday"),
                 "minute": 0,
                 "player": "",
-                "description": opportunity.get("description") or f"Matchday push: {home_code} vs {away_code}",
+                "description": opportunity.get("description") or f"Matchday push: {match_display}",
             },
             "api_data": match,
             "x_trending": {
@@ -521,7 +522,7 @@ class MatchdayPipeline:
     def _match_display(self, match: dict) -> str:
         home = match.get("team_home", {})
         away = match.get("team_away", {})
-        return f"{home.get('code') or home.get('name') or 'TBD'} vs {away.get('code') or away.get('name') or 'TBD'}"
+        return f"{team_display_cn(home)} vs {team_display_cn(away)}"
 
     def _score_display(self, home: dict, away: dict) -> str:
         if home.get("score") is None or away.get("score") is None:

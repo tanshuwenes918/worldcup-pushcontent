@@ -3,6 +3,7 @@
 将生成的 Push 内容写入飞书多维表格
 """
 import json
+import re
 import urllib.request
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from config import settings
+from data_sources.api_football import team_display_cn, team_name_to_cn
 
 
 class BitableExporter:
@@ -152,17 +154,11 @@ class BitableExporter:
         translations = content.get("translations", {})
         scenario = content.get("scenario", "")
 
-        # 合并所有语言的 AIGC Prompt
-        aigc_prompts = {}
-        if en.get("aigc_prompt"):
-            aigc_prompts["EN"] = en.get("aigc_prompt", {})
-        for lang, lang_content in translations.items():
-            if lang_content.get("aigc_prompt"):
-                aigc_prompts[lang] = lang_content.get("aigc_prompt", {})
+        match_display = self._match_display_cn(event_ctx)
 
         fields = {
             # 赛事信息
-            "对阵": match.get("match_display", ""),
+            "对阵": match_display,
             "赛事阶段": match.get("stage", "小组赛"),
             "触发事件": event.get("description", ""),
             "关联球员": event.get("player", ""),
@@ -177,7 +173,7 @@ class BitableExporter:
             "Push Desc (EN)": en.get("push_description", ""),
 
             # AIGC Prompt & Hashtags
-            "AIGC Prompt JSON": json.dumps(aigc_prompts, ensure_ascii=False, indent=2),
+            "AIGC Prompt JSON": self._build_aigc_prompt_text(event_ctx, content, match_display),
             "Hashtag 建议": en.get("hashtags", ""),
 
             # 审核
@@ -215,7 +211,7 @@ class BitableExporter:
             fields["情绪标签"] = self._normalize_emotions(emotion_tags)
 
         # 关联国家 (从 teams 提取)
-        teams = match.get("teams", [])
+        teams = self._teams_cn(event_ctx)
         if teams:
             fields["关联国家"] = ", ".join(teams)
 
@@ -228,6 +224,121 @@ class BitableExporter:
                 fields["情绪标签"] = self._normalize_emotions(emotions)
 
         return fields
+
+    def _match_display_cn(self, event_ctx: dict) -> str:
+        """Build the table-facing match display using Chinese team names."""
+        match = event_ctx.get("match", {})
+        api_data = event_ctx.get("api_data", {})
+        home = api_data.get("team_home", {})
+        away = api_data.get("team_away", {})
+        if home or away:
+            return f"{team_display_cn(home)} vs {team_display_cn(away)}"
+
+        teams = match.get("teams", [])
+        if isinstance(teams, list) and len(teams) >= 2:
+            return f"{team_display_cn(teams[0])} vs {team_display_cn(teams[1])}"
+
+        display = str(match.get("match_display", "") or "").strip()
+        parts = [part.strip() for part in re.split(r"\bvs\b", display, maxsplit=1, flags=re.I)]
+        if len(parts) == 2 and all(parts):
+            return f"{team_name_to_cn(parts[0])} vs {team_name_to_cn(parts[1])}"
+        return team_name_to_cn(display) or display
+
+    def _teams_cn(self, event_ctx: dict) -> list[str]:
+        match = event_ctx.get("match", {})
+        api_data = event_ctx.get("api_data", {})
+        home = api_data.get("team_home", {})
+        away = api_data.get("team_away", {})
+        if home or away:
+            return [team_display_cn(home), team_display_cn(away)]
+
+        teams = match.get("teams", [])
+        if not isinstance(teams, list):
+            return []
+
+        normalized = []
+        for team in teams:
+            name = team_display_cn(team)
+            if name and name not in normalized:
+                normalized.append(name)
+        return normalized
+
+    def _build_aigc_prompt_text(self, event_ctx: dict, content: dict, match_display: str) -> str:
+        """Convert the structured AIGC prompt into plain text under 100 words."""
+        prompt = self._preferred_aigc_prompt(content)
+        event = event_ctx.get("event", {})
+
+        if isinstance(prompt, str) and prompt.strip():
+            parsed_prompt = self._parse_prompt_json_string(prompt)
+            if isinstance(parsed_prompt, dict):
+                prompt = parsed_prompt
+            else:
+                text = self._plain_prompt_string(prompt)
+                return self._truncate_words(text, 100)
+
+        if isinstance(prompt, dict):
+            genre = self._prompt_part(prompt.get("genre"), ("primary", "secondary", "fusion"))
+            mood = self._prompt_part(prompt.get("mood"), ("primary", "secondary", "intensity"))
+            instrumentation = self._prompt_part(prompt.get("instrumentation"), ("core", "accent"))
+            lyrics = prompt.get("lyrics", {}) if isinstance(prompt.get("lyrics"), dict) else {}
+            theme = lyrics.get("theme") or event.get("description", "")
+            genre_text = genre or "high-energy football"
+            text = (
+                f"Create {self._article_for(genre_text)} {genre_text} AI anthem for {match_display}. "
+                f"Mood: {mood or 'fan hype'}. Theme: {theme}. "
+                f"Use {instrumentation or 'stadium drums, crowd chants, and a replayable chorus'}. "
+                "Keep it safe, punchy, mobile-first, and social-native."
+            )
+        else:
+            trigger = event.get("description", "")
+            text = (
+                f"Create a high-energy football AI anthem for {match_display}. "
+                f"Use the trigger angle: {trigger}. "
+                "Keep it chant-ready, social-native, punchy, and safe."
+            )
+
+        return self._truncate_words(text, 100)
+
+    def _parse_prompt_json_string(self, value: str):
+        text = value.strip()
+        if not text.startswith(("{", "[")):
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    def _plain_prompt_string(self, value: str) -> str:
+        text = re.sub(r"[{}\[\]\"]+", "", value.strip())
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _article_for(self, text: str) -> str:
+        return "an" if text[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
+
+    def _preferred_aigc_prompt(self, content: dict):
+        en = content.get("en", {})
+        if en.get("aigc_prompt"):
+            return en.get("aigc_prompt")
+        for lang_content in content.get("translations", {}).values():
+            if lang_content.get("aigc_prompt"):
+                return lang_content.get("aigc_prompt")
+        return {}
+
+    def _prompt_part(self, value, preferred_keys: tuple[str, ...] = ()) -> str:
+        if isinstance(value, dict):
+            keys = preferred_keys or tuple(value.keys())
+            parts = [self._prompt_part(value.get(key)) for key in keys]
+            return ", ".join(part for part in parts if part)
+        if isinstance(value, list):
+            parts = [self._prompt_part(item) for item in value]
+            return ", ".join(part for part in parts if part)
+        return str(value or "").strip()
+
+    def _truncate_words(self, text: str, max_words: int) -> str:
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]).rstrip(" ,.;:") + "."
 
     def _to_bitable_timestamp(self, value) -> Optional[int]:
         """Convert common datetime strings to a Feishu-compatible unix ms timestamp."""

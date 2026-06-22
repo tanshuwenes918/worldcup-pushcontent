@@ -4,6 +4,8 @@
 替代原 API-Football，使用国内聚合数据服务
 """
 import json
+import re
+import unicodedata
 import urllib.parse
 import urllib.request
 from datetime import date, datetime
@@ -37,10 +39,107 @@ TEAM_CODE_TO_CN = {
     "POL": "波兰", "TUR": "土耳其", "UKR": "乌克兰", "WAL": "威尔士",
     # L组
     "SUI": "瑞士", "AUT": "奥地利", "IRN": "伊朗", "QAT": "卡塔尔",
+    # 常见补充/历史强队，避免外部源返回时显示半英半中
+    "SWE": "瑞典", "CIV": "科特迪瓦",
 }
 
 # 中文名 → 3字母代码（反向映射）
 TEAM_CN_TO_CODE = {v: k for k, v in TEAM_CODE_TO_CN.items()}
+
+TEAM_EN_TO_CN = {
+    "mexico": "墨西哥",
+    "south africa": "南非",
+    "korea republic": "韩国",
+    "south korea": "韩国",
+    "czech republic": "捷克",
+    "czechia": "捷克",
+    "argentina": "阿根廷",
+    "peru": "秘鲁",
+    "denmark": "丹麦",
+    "cameroon": "喀麦隆",
+    "brazil": "巴西",
+    "morocco": "摩洛哥",
+    "scotland": "苏格兰",
+    "haiti": "海地",
+    "united states": "美国",
+    "united states of america": "美国",
+    "usa": "美国",
+    "us": "美国",
+    "canada": "加拿大",
+    "colombia": "哥伦比亚",
+    "paraguay": "巴拉圭",
+    "germany": "德国",
+    "italy": "意大利",
+    "ecuador": "厄瓜多尔",
+    "honduras": "洪都拉斯",
+    "spain": "西班牙",
+    "croatia": "克罗地亚",
+    "bolivia": "玻利维亚",
+    "tunisia": "突尼斯",
+    "france": "法国",
+    "uruguay": "乌拉圭",
+    "nigeria": "尼日利亚",
+    "saudi arabia": "沙特阿拉伯",
+    "saudi": "沙特阿拉伯",
+    "england": "英格兰",
+    "netherlands": "荷兰",
+    "holland": "荷兰",
+    "serbia": "塞尔维亚",
+    "costa rica": "哥斯达黎加",
+    "portugal": "葡萄牙",
+    "belgium": "比利时",
+    "senegal": "塞内加尔",
+    "iraq": "伊拉克",
+    "japan": "日本",
+    "australia": "澳大利亚",
+    "chile": "智利",
+    "norway": "挪威",
+    "poland": "波兰",
+    "turkey": "土耳其",
+    "turkiye": "土耳其",
+    "ukraine": "乌克兰",
+    "wales": "威尔士",
+    "switzerland": "瑞士",
+    "austria": "奥地利",
+    "iran": "伊朗",
+    "qatar": "卡塔尔",
+    "sweden": "瑞典",
+    "cote d ivoire": "科特迪瓦",
+    "cote divoire": "科特迪瓦",
+    "ivory coast": "科特迪瓦",
+}
+
+
+def _normalize_team_key(value: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text.lower()).strip()
+
+
+def team_name_to_cn(value: str) -> str:
+    """Convert a team code, Chinese name, or common English name to Chinese."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    upper = text.upper()
+    if upper in TEAM_CODE_TO_CN:
+        return TEAM_CODE_TO_CN[upper]
+    if text in TEAM_CN_TO_CODE:
+        return text
+
+    return TEAM_EN_TO_CN.get(_normalize_team_key(text), text)
+
+
+def team_display_cn(team: dict | str) -> str:
+    """Return the best Chinese display name for a team dict or raw team value."""
+    if isinstance(team, dict):
+        for key in ("name", "name_zh", "name_cn", "code", "name_en"):
+            value = team.get(key)
+            display = team_name_to_cn(value)
+            if display:
+                return display
+        return "TBD"
+    return team_name_to_cn(team) or "TBD"
 
 # 比赛类型映射
 MATCH_TYPE_MAP = {
